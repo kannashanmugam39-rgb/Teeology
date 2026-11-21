@@ -137,7 +137,10 @@
   function activeRound() { return Object.values(S.rounds).filter(r => r.status === 'open').sort((a, b) => b.createdAt - a.createdAt)[0]; }
   function closedRounds() { return Object.values(S.rounds).filter(r => r.status === 'closed').sort((a, b) => (a.date + a.createdAt).localeCompare(b.date + b.createdAt)); }
   function computed(r) { return TE.computeRound(r); }
-  function statsRounds() { return closedRounds().filter(r => (r.format || 'individual') === 'individual'); }
+  function statsRounds() {
+    const minQ = S.profile.cfg.minQuality || 0;
+    return closedRounds().filter(r => (r.format || 'individual') === 'individual' && (!minQ || (computed(r).summary.quality ?? 0) >= minQ));
+  }
 
   // ================= RENDER =================
   function render() {
@@ -171,7 +174,7 @@
     }
     const firstRun = !p.name && !nCourses && !Object.keys(S.rounds).length;
     return top('<span class="brand">TEEOLOGY</span>') + `<div class="wrap">
-      ${S.mode !== 'cloud' ? `<div class="banner">Saving on this device. ${S.db ? '' : 'Open this page signed in to claude.ai to back up rounds to your account. '}Export a backup from <b>Data</b> after each round.</div>` : ''}
+      ${S.mode !== 'cloud' ? `<div class="banner">Saving on this device. ${S.db || !window.claude ? '' : 'Sign in to claude.ai to back up rounds to your account. '}Export a backup from <b>Data</b> after each round.</div>` : ''}
       ${firstRun ? `<div class="card"><h2>Welcome</h2><p class="mut">Reach the zone, get down — targets set to your net par. Three quick steps:</p>
         <ol class="mut"><li>Set your handicap and distances</li><li>Add your course</li><li>Start a round</li></ol>
         <button class="btn pri block" data-act="nav" data-v="settings">1. Set up my profile</button></div>` : ''}
@@ -250,6 +253,7 @@
       body = `<div class="card stack">
         ${selF('Rolling window', 'cfg.rollingWindow', c.rollingWindow, [[5, '5 rounds'], [10, '10 rounds'], [20, '20 rounds'], [999, 'All']])}
         ${numF('Minimum sample to show a stat', 'cfg.minSample', c.minSample, 5, 50)}
+        ${numF('Leave rounds out of trends below this data quality (%)', 'cfg.minQuality', c.minQuality || 0, 0, 100)}
         ${selF('Strokes-gained baseline', 'cfg.baselineBand', c.baselineBand || '', [['', 'My handicap band']].concat(TE.BANDS.map(b => [b.id, b.name + ' band'])))}
         <div class="grid2">${numF('Tighten when ticks above %', 'cfg.tightenAbove', c.tightenAbove, 50, 95)}${numF('Ease when ticks below %', 'cfg.easeBelow', c.easeBelow, 10, 60)}</div>
         <div class="grid3">${numF('Evidence rounds', 'cfg.evidenceRounds', c.evidenceRounds, 5, 30)}${numF('Evidence holes', 'cfg.evidenceHoles', c.evidenceHoles, 50, 400)}${numF('Cooldown rounds', 'cfg.cooldownRounds', c.cooldownRounds, 5, 30)}</div>
@@ -282,7 +286,7 @@
     const el = e.target; const b = el.dataset.bind; const v = el.type === 'checkbox' ? el.checked : el.value;
     const p = S.profile;
     const [scope, key] = [b.slice(0, b.indexOf('.')), b.slice(b.indexOf('.') + 1)];
-    const intKeys = ['zone', 'offset', 'k', 'bFloor', 'bCeil', 'par3Margin', 'nearYd', 'par5Zone', 'leakThreshold', 'rollingWindow', 'minSample', 'tightenAbove', 'easeBelow', 'evidenceRounds', 'evidenceHoles', 'cooldownRounds'];
+    const intKeys = ['zone', 'offset', 'k', 'bFloor', 'bCeil', 'par3Margin', 'nearYd', 'par5Zone', 'leakThreshold', 'rollingWindow', 'minSample', 'tightenAbove', 'easeBelow', 'evidenceRounds', 'evidenceHoles', 'cooldownRounds', 'minQuality'];
     if (scope === 'profile') { p[key] = key === 'hi' ? (num(v) ?? p.hi) : v; save('profile'); if (key === 'band') render(); return; }
     if (scope === 'bag') {
       if (key === 'clubs') p.bag.clubs = v.split('\n').map(s => s.trim()).filter(Boolean);
@@ -330,6 +334,7 @@
         <div><label class="f">Back 9 CR</label><input type="number" step="0.1" data-bind="course.cr9b" value="${c.cr9b}" placeholder="${fmt(c.cr / 2)}"></div><div><label class="f">Back 9 slope</label><input type="number" data-bind="course.slope9b" value="${c.slope9b}" placeholder="${c.slope}"></div></div></details>
       </div>
       <div class="card"><h2>Holes <span class="mut small">par ${parTotal(c)} · ${c.holes.reduce((t, h) => t + (+h.yards || 0), 0)} yd</span></h2>
+      <div class="mut small" style="margin-bottom:6px">⛳ ${c.holes.filter(h => h.green).length} of ${c.holes.length} greens marked by GPS (mark them from the hole screen while you play).</div>
       ${dup ? '<div class="flag bad">Stroke indexes must be 1–18 with no repeats</div>' : ''}
       <table class="hgrid"><tr><th>Hole</th><th>Par</th><th>SI</th><th>Yards</th></tr>
       ${c.holes.map((h, i) => `<tr><td><b>${h.n}</b></td><td><input type="number" min="3" max="6" data-bind="course.h.${i}.par" value="${h.par}"></td><td><input type="number" min="1" max="18" data-bind="course.h.${i}.si" value="${h.si}"></td><td><input type="number" data-bind="course.h.${i}.yards" value="${h.yards}"></td></tr>`).join('')}</table></div>
@@ -463,7 +468,8 @@
 
       ${!quick ? `<div class="fld"><div class="lab">Entered the zone from <span class="mut">${inp.entryLie === 'G' ? 'first putt in ft' : 'yards to hole'}</span></div>
         <div class="chips" style="margin-bottom:8px">${zoneLies.map(l => `<button class="chip sm ${(inp.entryLie || '') === l.code ? 'on' : ''}" data-act="set" data-f="entryLie" data-v="${esc(l.code)}">${esc(l.name)}</button>`).join('')}</div>
-        ${inp.entryLie === 'G' ? `<input type="number" inputmode="numeric" data-bind="in.firstPuttFt" value="${inp.firstPuttFt ?? ''}" placeholder="first putt (ft)">` : `<input type="number" inputmode="numeric" data-bind="in.entryYd" value="${inp.entryYd ?? ''}" placeholder="e.g. 85">`}</div>` : ''}
+        ${inp.entryLie === 'G' ? `<input type="number" inputmode="numeric" data-bind="in.firstPuttFt" value="${inp.firstPuttFt ?? ''}" placeholder="first putt (ft)">` : `<input type="number" inputmode="numeric" data-bind="in.entryYd" value="${inp.entryYd ?? ''}" placeholder="e.g. 85">`}
+        ${gpsRow(r, n, inp)}</div>` : ''}
 
       <div class="fld"><div class="lab">Zone shots <span class="mut">to hole out · target ${t.bT}</span></div>${stepper('zoneShots', inp.zoneShots, t.bT)}</div>
       <div class="fld"><div class="lab">Putts</div>${stepper('putts', inp.putts, 2)}</div>
@@ -499,6 +505,55 @@
       ${res.flags && res.flags.length ? `<div class="banner" style="margin-top:8px;background:#FCE8E6;color:var(--bad)">${res.flags.map(esc).join('<br>')}</div>` : ''}
     </div>`;
   }
+  // ---------- GPS tap-to-mark ----------
+  function holeGreen(r, n) {
+    const h = r.holes.find(x => x.n == n); if (h && h.green) return h.green;
+    const c = S.courses[r.courseId]; const ch = c && c.holes.find(x => x.n == n);
+    return ch && ch.green ? ch.green : null;
+  }
+  function gpsRow(r, n, inp) {
+    if (!('geolocation' in navigator)) return '';
+    const g = holeGreen(r, n); const onGreen = inp.entryLie === 'G';
+    return `<div class="gps">
+      ${g && !onGreen ? `<button class="btn pri grow" data-act="gpsentry">📍 My ball is here</button>` : ''}
+      <button class="btn ${g ? '' : 'grow'}" data-act="gpsgreen">${g ? 'Re-mark green' : '⛳ Mark green centre'}</button></div>
+      <div class="mut small">${inp.entrySrc === 'gps' ? `<span class="flag ok">GPS ✓</span> entry measured${inp.entryPos && inp.entryPos.acc ? ' (±' + Math.round(inp.entryPos.acc / 0.9144) + ' yd)' : ''}. ` : ''}${g ? (onGreen ? 'On the green, enter the first putt in feet.' : 'Stand by your ball for the first shot in the zone and tap.') : 'Stand in the middle of this green once and tap. It is saved to the course for every future round.'}</div>`;
+  }
+  function getPos() {
+    return new Promise((res, rej) => navigator.geolocation.getCurrentPosition(
+      p => res({ lat: p.coords.latitude, lon: p.coords.longitude, acc: p.coords.accuracy }),
+      e => rej(e), { enableHighAccuracy: true, timeout: 15000, maximumAge: 3000 }));
+  }
+  function gpsError(e) {
+    toast(e && e.code === 1 ? 'Location is blocked. Allow location for this site in your browser settings.' : 'Could not get a GPS fix. Try again in the open.');
+  }
+  async function gpsEntry() {
+    const { r, inp, n } = curInp(); const g = holeGreen(r, n); if (!g) return;
+    toast('Getting GPS fix…');
+    try {
+      const pos = await getPos();
+      const yd = Math.round(TE.distanceYd(pos, g));
+      if (yd > 600) return toast(`You are ${yd} yd from this green. Is this the right hole?`);
+      inp.entryYd = yd; inp.entrySrc = 'gps'; inp.entryPos = pos;
+      if (!inp.entryLie) inp.entryLie = 'F';
+      toast(`Entry: ${yd} yd`);
+      holeChanged();
+    } catch (e) { gpsError(e); }
+  }
+  async function gpsGreen() {
+    const { r, n } = curInp();
+    toast('Getting GPS fix…');
+    try {
+      const pos = await getPos(); const g = { lat: pos.lat, lon: pos.lon, acc: pos.acc };
+      const rh = r.holes.find(x => x.n == n); if (rh) rh.green = g;
+      const c = S.courses[r.courseId]; const ch = c && c.holes.find(x => x.n == n);
+      if (ch) { ch.green = g; save('course', c.id); }
+      save('round', r.id);
+      toast(`Green ${n} saved`);
+      keepScroll();
+    } catch (e) { gpsError(e); }
+  }
+
   function cuesFor(r, n, comp, idx) {
     const cues = r.cfg.cues || []; if (!cues.length) return '';
     for (const c of cues) { const m = c.match(/^([\d,\s]+):\s*(.+)$/); if (m && m[1].split(',').map(s => +s.trim()).includes(+n)) return m[2]; }
@@ -529,7 +584,7 @@
   function holeBind(key, v, live) {
     const { inp } = curInp();
     if (key.startsWith('cf.')) { inp.cf = inp.cf || {}; inp.cf[key.slice(3)] = v; }
-    else if (['entryYd', 'firstPuttFt', 'prox'].includes(key)) inp[key] = num(v) ?? '';
+    else if (['entryYd', 'firstPuttFt', 'prox'].includes(key)) { inp[key] = num(v) ?? ''; if (key === 'entryYd') { inp.entrySrc = inp.entryYd === '' ? '' : 'manual'; delete inp.entryPos; } }
     else inp[key] = v;
     holeChanged(!live);
     if (live) { // update the result bar without stealing focus
@@ -555,9 +610,10 @@
       <div class="stats">${stat(s.gross + (s.hasNR ? '*' : ''), 'Gross')}${stat(s.netExact ? fmt(s.gross - r.ph, 0) : '–', 'Net')}${stat(s.stableford, 'Stableford')}
         ${stat(s.aTicks + '/' + s.stagePlayed, 'A ✓ ' + pct(s.aTicks, s.stagePlayed))}${stat(s.bTicks + '/' + s.stagePlayed, 'B ✓ ' + pct(s.bTicks, s.stagePlayed))}${stat(sgn(s.vsNetPar, 0), 'vs net par')}
         ${stat(s.penalties, 'Penalties (' + s.penStrokes + ' str)')}${stat(s.netDoubles, 'Net doubles+')}${stat(s.threePutts, '3-putts')}
-        ${stat(s.avgEntry !== null ? fmt(s.avgEntry, 0) : '–', 'Avg entry yd')}${stat(s.avgProx !== null ? fmt(s.avgProx, 0) : '–', 'Avg prox ft')}${stat(s.upDownN ? s.upDown + '/' + s.upDownN : '–', 'Up & down')}</div>
+        ${stat(s.avgEntry !== null ? fmt(s.avgEntry, 0) : '–', 'Avg entry yd')}${stat(s.avgProx !== null ? fmt(s.avgProx, 0) : '–', 'Avg prox ft')}${stat(s.upDownN ? s.upDown + '/' + s.upDownN : '–', 'Up & down')}
+        ${stat(s.quality === null ? '–' : s.quality + '%', 'Data quality')}</div>
       <div class="card" style="margin-top:12px"><h2>Where the shots went</h2><p>${esc(sgLine)}</p>
-        <p class="mut small">Shots over stage targets: A +${s.vsA}, B +${s.vsB}.${s.stretch ? ' Stretch holes: ' + s.stretch + '.' : ''}${s.adjusted !== s.gross ? ' Adjusted gross for handicap: ' + s.adjusted + '.' : ''}</p></div>
+        <p class="mut small">Shots over stage targets: A +${s.vsA}, B +${s.vsB}.${s.stretch ? ' Stretch holes: ' + s.stretch + '.' : ''}${s.adjusted !== s.gross ? ' Adjusted gross for handicap: ' + s.adjusted + '.' : ''} Data quality ${s.quality ?? 0}%: ${s.qualityN} of ${s.stagePlayed} holes have a GPS entry distance and lie.${c.minQuality && (s.quality ?? 0) < c.minQuality ? ' This round is below your ' + c.minQuality + '% minimum, so it is left out of trend charts.' : ''}</p></div>
       <div class="card"><h2>Practice plan</h2>${topLeaks.map(l => `<div class="fld"><b>${esc(l)} — ${esc(leakName(l) || (l === 'A' ? 'Reaching the zone' : 'Zone to hole'))}</b>${s.leaks[l] ? `<span class="mut small"> · ${s.leaks[l].n} holes</span>` : ''}<div class="mut small">${esc(TE.DRILLS[l] || 'Pick a drill for this leak.')}</div></div>`).join('')}
         ${Object.keys(s.leaks).length ? `<div class="mut small">Leak tally: ${Object.entries(s.leaks).map(([k, v]) => k + ' ' + v.n + (v.contrib ? ' (+' + v.contrib + ')' : '')).join(' · ')}</div>` : ''}</div>
       <div class="card stack"><div><label class="f">Best thing today</label><input type="text" data-bind="rnd.best" value="${esc(r.best || '')}"></div><div><label class="f">One fix to practise</label><input type="text" data-bind="rnd.fix" value="${esc(r.fix || '')}"></div></div>
@@ -580,7 +636,7 @@
   // ---------- HISTORY ----------
   function vHistory() {
     const rs = Object.values(S.rounds).sort((a, b) => (b.date + b.createdAt).localeCompare(a.date + a.createdAt));
-    return top('Round history', 'home') + `<div class="wrap"><div class="card list">${rs.length ? rs.map(r => { const s = computed(r).summary; return `<div class="it" data-act="nav" data-v="${r.status === 'open' ? 'hole' : 'summary'}" data-id="${r.id}" data-n="${r.holes[0].n}"><span class="grow"><b>${esc(r.date)}</b> ${esc(r.courseName)}<div class="mut small">${s.gross}${s.hasNR ? '*' : ''} gross · ${s.stableford} pts · A ${s.aTicks}/${s.stagePlayed} · B ${s.bTicks}/${s.stagePlayed}${r.status === 'open' ? ' · <b>open</b>' : ''}${(r.format || 'individual') !== 'individual' ? ' · ' + esc(r.format) : ''}</div></span>›</div>`; }).join('') : '<p class="mut">No rounds yet.</p>'}</div></div>`;
+    return top('Round history', 'home') + `<div class="wrap"><div class="card list">${rs.length ? rs.map(r => { const s = computed(r).summary; return `<div class="it" data-act="nav" data-v="${r.status === 'open' ? 'hole' : 'summary'}" data-id="${r.id}" data-n="${r.holes[0].n}"><span class="grow"><b>${esc(r.date)}</b> ${esc(r.courseName)}<div class="mut small">${s.gross}${s.hasNR ? '*' : ''} gross · ${s.stableford} pts · A ${s.aTicks}/${s.stagePlayed} · B ${s.bTicks}/${s.stagePlayed}${s.quality !== null ? ' · DQ ' + s.quality + '%' : ''}${r.status === 'open' ? ' · <b>open</b>' : ''}${(r.format || 'individual') !== 'individual' ? ' · ' + esc(r.format) : ''}</div></span>›</div>`; }).join('') : '<p class="mut">No rounds yet.</p>'}</div></div>`;
   }
 
   // ---------- TRENDS ----------
@@ -742,6 +798,8 @@
       }
       case 'penadd': { const { inp } = curInp(); inp.penalties = inp.penalties || []; inp.penalties.push({ code: d.c, strokes: +d.s, stage: num(inp.toZone) !== null && num(inp.zoneShots) !== null ? 'B' : 'A' }); return holeChanged(); }
       case 'penstage': { const { inp } = curInp(); inp.penalties[+d.i].stage = d.s; return holeChanged(); }
+      case 'gpsentry': return gpsEntry();
+      case 'gpsgreen': return gpsGreen();
       case 'pendel': { const { inp } = curInp(); inp.penalties.splice(+d.i, 1); return holeChanged(); }
       case 'commit': { const { inp } = curInp(); const v = d.v === 'yes' ? true : d.v === 'no' ? false : 'unsure'; inp.commit = inp.commit === v ? null : v; return holeChanged(); }
       case 'cf': { const { inp } = curInp(); inp.cf = inp.cf || {}; inp.cf[d.id] = inp.cf[d.id] === d.v ? '' : d.v; return holeChanged(); }
@@ -793,6 +851,10 @@
     S.courses = (d && d.courses) || {}; S.rounds = (d && d.rounds) || {};
     render();
     initCloud();
+    // Offline support when hosted as a standalone PWA (not inside a claude.ai artifact).
+    if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol) && !window.claude) {
+      navigator.serviceWorker.register('sw.js').catch(() => { /* offline cache unavailable */ });
+    }
   }
   window.TeeologyApp = { S, V, render, go, computed, csvHoles };
   boot();

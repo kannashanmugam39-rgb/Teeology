@@ -105,5 +105,18 @@ eq('PH', TE.playingHandicap(TE.courseHandicap(21.4, 125, 70.1, 71), 95), 22);
 }
 // 9-hole SI ranking
 eq('nine SI', TE.nineHoleSI([{ si: 7 }, { si: 1 }, { si: 15 }]), [2, 1, 3]);
+// GPS distance: 0.001° latitude ≈ 111.2 m ≈ 121.6 yd
+eq('gps yd', Math.round(TE.distanceYd({ lat: 51.5, lon: -0.1 }, { lat: 51.501, lon: -0.1 })), 122);
+eq('gps null', TE.distanceYd(null, { lat: 1, lon: 1 }), null);
+// Data quality: 2 of 3 played holes have GPS entry (one is a hole-out from outside the zone)
+{
+  const holes = [1, 2, 3].map(n => ({ n, par: 4, si: n, yards: 380 }));
+  const round = { holes, ph: 10, cfg: cfg(), bag: { T: 200, F: 160, par3Club: 160 }, band: '13-20', holesPlayed: '18', entries: {
+    1: { toZone: 2, zoneShots: 3, entryYd: 90, entryLie: 'F', entrySrc: 'gps' },
+    2: { toZone: 2, zoneShots: 0 },
+    3: { toZone: 2, zoneShots: 3, entryYd: 80, entryLie: 'F', entrySrc: 'manual' } } };
+  const s = TE.computeRound(round).summary;
+  eq('quality', [s.qualityN, s.quality], [2, 67]);
+}
 console.log(`${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

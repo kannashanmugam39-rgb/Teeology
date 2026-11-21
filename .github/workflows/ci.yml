@@ -1,0 +1,31 @@
+name: CI
+on:
+  push:
+  pull_request:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Engine tests (spec acceptance cases)
+        run: node test/engine.test.js
+      - name: Build PWA
+        run: python3 build.py
+      - name: End-to-end test
+        run: |
+          npm install --no-save playwright@1.48.2
+          npx playwright install --with-deps chromium
+          node test/e2e.js
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: teeology-dist
+          path: |
+            dist/
+            test/shots/

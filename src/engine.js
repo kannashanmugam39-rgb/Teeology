@@ -81,6 +81,7 @@
       cues: [],
       customFields: [],       // {id, name, type: number|yesno|text}
       baselineBand: null,     // null = player's own band
+      minQuality: 0,          // % data quality a round needs to feed trend charts (0 = all)
     };
   }
 
@@ -88,6 +89,16 @@
   const fmod = (a, n) => ((a % n) + n) % n;
   const clamp = (x, lo, hi) => Math.max(lo, Math.min(hi, x));
   const num = (x) => (x === '' || x === null || x === undefined || isNaN(+x) ? null : +x);
+
+  // ---------- GPS ----------
+  // Great-circle distance between two {lat, lon} points, in yards.
+  function distanceYd(a, b) {
+    if (!a || !b) return null;
+    const R = 6371008.8, rad = Math.PI / 180;
+    const dLat = (b.lat - a.lat) * rad, dLon = (b.lon - a.lon) * rad;
+    const h = Math.sin(dLat / 2) ** 2 + Math.cos(a.lat * rad) * Math.cos(b.lat * rad) * Math.sin(dLon / 2) ** 2;
+    return 2 * R * Math.asin(Math.min(1, Math.sqrt(h))) / 0.9144;
+  }
 
   // ---------- 3.2 Handicap ----------
   // Course handicap = HI × Slope/113 + (CR − Par). For 9 holes, half the HI with 9-hole CR/slope/par.
@@ -349,6 +360,11 @@
     s.commitN = commits.length; s.commitYes = commits.filter(x => x.inp.commit === true).length;
     s.flags = rows.filter(x => x.r.flags && x.r.flags.length).map(x => ({ n: x.hole.n, flags: x.r.flags }));
     s.leakMissing = done.filter(x => x.r.leakNeeded && !x.inp.leak).map(x => x.hole.n);
+    // Data quality (spec 6): % of played holes with a GPS entry distance and a lie.
+    // A hole-out from outside the zone needs no entry, so it counts as complete data.
+    const good = played.filter(x => +x.inp.zoneShots === 0 || (x.inp.entrySrc === 'gps' && x.inp.entryLie));
+    s.qualityN = good.length;
+    s.quality = played.length ? Math.round(100 * good.length / played.length) : null;
     s.pensByCode = {};
     done.forEach(x => (x.inp.penalties || []).forEach(p => { s.pensByCode[p.code] = (s.pensByCode[p.code] || 0) + 1; }));
     return s;
@@ -406,7 +422,7 @@
     B: 'Stage B: wedge ladder + lag ladder, alternating sessions.',
   };
 
-  const api = { BANDS, BAND_PRESETS, bandFor, defaultConfig, courseHandicap, playingHandicap, strokesOnHole, nineHoleSI, shotsNeeded, holeTargets, makeBaseline, holeResult, computeRound, summarise, closeBlockers, adaptiveSuggestion, cfgSig, effectiveCfg, roundHoles, DRILLS, whsRound };
+  const api = { distanceYd, BANDS, BAND_PRESETS, bandFor, defaultConfig, courseHandicap, playingHandicap, strokesOnHole, nineHoleSI, shotsNeeded, holeTargets, makeBaseline, holeResult, computeRound, summarise, closeBlockers, adaptiveSuggestion, cfgSig, effectiveCfg, roundHoles, DRILLS, whsRound };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.TE = api;
 })(typeof window !== 'undefined' ? window : globalThis);
