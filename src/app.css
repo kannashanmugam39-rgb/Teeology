@@ -85,3 +85,4 @@ table.t td.l,table.t th.l{text-align:left}
 
 .gps{display:flex;gap:8px;margin:8px 0 4px}
 .flag.ok{background:var(--tint);color:var(--ok)}
+.chip.on .mut{color:#CFE8DA}

@@ -48,7 +48,28 @@ const check = (name, ok, detail) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${nam
   await pg.click('text=Done');
 
   // course
-  await pg.click('text=Add your first course');
+  // Sutton Green comes built in: pick the course, then switch tees and check the holes update
+  await pg.click('text=Start a round');
+  await pg.selectOption("[data-bind='start.courseName']", 'Sutton Green GC');
+  const firstRow = async () => (await pg.locator('table.t tr').nth(3).innerText()).split(/\s+/).slice(1, 4).join(',');
+  check('Sutton Green white: holes 1-3 yd', await firstRow() === '548,341,175', await firstRow());
+  const phWhite = await pg.innerText('.hdr .big');
+  await pg.click("[data-act=picktee]:has-text('Blue')");
+  check('Sutton Green blue: holes 1-3 yd', await firstRow() === '519,316,166', await firstRow());
+  const phBlue = await pg.innerText('.hdr .big');
+  check('playing handicap changes with tee', phWhite !== phBlue, `white ${phWhite}, blue ${phBlue}`);
+  await pg.selectOption("[data-bind='start.holesPlayed']", 'B9');
+  check('back nine preview', (await pg.locator('table.t tr').first().innerText()).trim().startsWith('H\t10'));
+  await pg.selectOption("[data-bind='start.holesPlayed']", '18');
+  await pg.click("[data-act=picktee]:has-text('Red')");
+  check('red tees need a rating before starting', await pg.isDisabled('[data-act=createround]'));
+  await pg.click("[data-act=picktee]:has-text('White')");
+  await pg.screenshot({ path: path.join(shots, '00-sutton-green.png'), fullPage: true });
+  await pg.click('[data-act=nav][data-v=home]');
+
+  // a course entered by hand
+  await pg.click('text=Courses');
+  await pg.click('text=+ Add course / tee');
   await pg.fill("[data-bind='course.name']", 'Test GC'); await pg.press("[data-bind='course.name']", 'Tab');
   const pars = [4, 4, 3, 5, 4, 4, 3, 4, 5, 4, 3, 4, 5, 4, 4, 3, 4, 5];
   const sis = [10, 2, 14, 6, 18, 4, 16, 8, 12, 9, 15, 1, 11, 5, 17, 13, 3, 7];
@@ -60,6 +81,7 @@ const check = (name, ok, detail) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${nam
     }
   }
   await pg.click('[data-act=savecourse]'); await pg.waitForTimeout(200);
+  check('new course selected on start screen', (await pg.inputValue("[data-bind='start.courseName']")) === 'Test GC');
   check('playing handicap shown', /^\d+$/.test(await pg.innerText('.hdr .big')), await pg.innerText('.hdr .big'));
   await pg.click('[data-act=createround]');
   await pg.screenshot({ path: path.join(shots, '02-plan.png'), fullPage: true });
@@ -117,7 +139,7 @@ const check = (name, ok, detail) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${nam
   await pg.screenshot({ path: path.join(shots, '06-trends.png'), fullPage: true });
   const csv = await pg.evaluate('window.TeeologyApp.csvHoles()');
   check('CSV has 18 hole rows', csv.trim().split('\n').length === 19, csv.trim().split('\n').length);
-  const greenSaved = await pg.evaluate('Object.values(window.TeeologyApp.S.courses)[0].holes[0].green != null');
+  const greenSaved = await pg.evaluate('Object.values(window.TeeologyApp.S.courses).find(c => c.name === "Test GC").holes[0].green != null');
   check('green 1 saved to course', greenSaved);
 
   // offline: service worker cached the app, so it loads with no network

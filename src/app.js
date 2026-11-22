@@ -119,6 +119,38 @@
     return p;
   }
 
+  // ================= COURSE LIBRARY =================
+  // Each saved course record is one course + one tee set. Records with the same name are the tees of one course.
+  // Sutton Green GC (Guildford, Surrey). Source: club website hole guide (yards, par, SI) and Golf Sherpa / Golfshake
+  // (ratings), checked 22 Nov 2026. Red tee ratings and ladies' par / SI were not published: enter them from the card.
+  const SG_PAR = [5, 4, 3, 4, 3, 4, 5, 4, 4, 5, 3, 4, 3, 4, 4, 3, 4, 5];
+  const SG_SI = [11, 5, 15, 7, 17, 9, 1, 13, 3, 10, 4, 18, 14, 6, 2, 16, 8, 12];
+  const SG_YDS = {
+    White: [548, 341, 175, 363, 125, 375, 558, 385, 431, 540, 235, 288, 187, 395, 448, 163, 355, 521],
+    Blue: [519, 316, 166, 318, 114, 320, 540, 374, 373, 520, 213, 267, 175, 365, 416, 144, 326, 483],
+    Red: [494, 288, 155, 278, 105, 309, 477, 351, 359, 455, 198, 266, 143, 345, 397, 137, 307, 473],
+  };
+  const SG_RATING = { White: { cr: 71.1, slope: 129 }, Blue: { cr: 69.0, slope: 125 }, Red: { cr: '', slope: '' } };
+  const LIBRARY = Object.keys(SG_YDS).map(tee => ({
+    id: 'lib-suttongreen-' + tee.toLowerCase(), library: 'suttongreen', libVersion: 1,
+    name: 'Sutton Green GC', tee, cr: SG_RATING[tee].cr, slope: SG_RATING[tee].slope, cr9f: '', slope9f: '', cr9b: '', slope9b: '',
+    holes: SG_PAR.map((par, i) => ({ n: i + 1, par, si: SG_SI[i], yards: SG_YDS[tee][i] })),
+    note: tee === 'Red' ? 'Ladies\' par, stroke index and the red tee rating are not published online. Check them against the scorecard.' : 'Ratings from published sources. Check them against the club scorecard.',
+    createdAt: 0,
+  }));
+  function seedLibrary() {
+    let added = false;
+    LIBRARY.forEach(c => {
+      const have = S.courses[c.id];
+      if (!have || (have.libVersion || 0) < c.libVersion && !have.edited) { S.courses[c.id] = Object.assign(clone(c), have ? { holes: c.holes.map((h, i) => Object.assign({}, h, have.holes[i] && have.holes[i].green ? { green: have.holes[i].green } : {})) } : {}); added = true; }
+    });
+    if (added) lsSave();
+  }
+  const courseNames = () => [...new Set(Object.values(S.courses).map(c => c.name))].sort((a, b) => a.localeCompare(b));
+  const teesOf = (name) => Object.values(S.courses).filter(c => c.name === name).sort((a, b) => totalYds(b) - totalYds(a));
+  const totalYds = (c) => c.holes.reduce((t, h) => t + (+h.yards || 0), 0);
+  const hasRating = (c) => num(c.cr) !== null && num(c.slope) !== null;
+
   // ================= VIEW STATE =================
   const V = { view: 'home', args: {}, tab: 'player' };
   function go(view, args) { V.view = view; V.args = args || {}; render(); window.scrollTo(0, 0); }
@@ -172,7 +204,7 @@
       <div class="stats" style="margin-top:10px">${stat(s.hasNR ? s.gross + '*' : s.gross, 'Gross')}${stat(s.stableford, 'Stableford')}${stat(sgn(s.vsNetPar, 0), 'vs net par')}${stat(s.aTicks + '/' + s.stagePlayed, 'A ✓')}${stat(s.bTicks + '/' + s.stagePlayed, 'B ✓')}${stat(s.netDoubles, 'Net doubles')}</div>
       <button class="btn block" style="margin-top:10px" data-act="nav" data-v="summary" data-id="${last.id}">Open summary</button></div>`;
     }
-    const firstRun = !p.name && !nCourses && !Object.keys(S.rounds).length;
+    const firstRun = !p.name && !Object.values(S.courses).some(c => !c.library) && !Object.keys(S.rounds).length;
     return top('<span class="brand">TEEOLOGY</span>') + `<div class="wrap">
       ${S.mode !== 'cloud' ? `<div class="banner">Saving on this device. ${S.db || !window.claude ? '' : 'Sign in to claude.ai to back up rounds to your account. '}Export a backup from <b>Data</b> after each round.</div>` : ''}
       ${firstRun ? `<div class="card"><h2>Welcome</h2><p class="mut">Reach the zone, get down — targets set to your net par. Three quick steps:</p>
@@ -305,7 +337,7 @@
     }
     if (scope === 'codes') { const parsed = parseCodes(v, key); if (parsed.length) { p.cfg[key] = parsed; save('profile'); } return; }
     if (scope === 'course') return courseBind(key, v);
-    if (scope === 'start') { V.args[key] = v; render(); return; }
+    if (scope === 'start') { V.args[key] = v; if (key === 'courseName') V.args.courseId = null; render(); return; }
     if (scope === 'h' || scope === 'in') return holeBind(key, v, live);
     if (scope === 'rnd') { const r = S.rounds[V.args.id]; r[key] = v; save('round', r.id); return; }
     if (scope === 'ov') { const r = S.rounds[V.args.id]; const [n, k] = key.split('.'); r.overrides = r.overrides || {}; r.overrides[n] = r.overrides[n] || {}; r.overrides[n][k] = k === 'teeClub' ? v : num(v); save('round', r.id); render(); return; }
@@ -315,7 +347,7 @@
   function vCourses() {
     const cs = Object.values(S.courses).sort((a, b) => a.name.localeCompare(b.name));
     return top('Courses', 'home') + `<div class="wrap"><button class="btn pri block" data-act="nav" data-v="course" data-new="1">+ Add course / tee</button>
-      <div class="card list" style="margin-top:12px">${cs.length ? cs.map(c => `<div class="it" data-act="nav" data-v="course" data-id="${c.id}"><span class="grow"><b>${esc(c.name)}</b><div class="mut small">${esc(c.tee)} tees · par ${parTotal(c)} · CR ${c.cr} / slope ${c.slope} · ${c.holes.reduce((t, h) => t + (+h.yards || 0), 0)} yd</div></span>›</div>`).join('') : '<p class="mut">No courses yet.</p>'}</div></div>`;
+      ${cs.length ? courseNames().map(nm => `<div class="card list" style="margin-top:12px"><h2>${esc(nm)}</h2>${teesOf(nm).map(c => `<div class="it" data-act="nav" data-v="course" data-id="${c.id}"><span class="grow"><b>${esc(c.tee)} tees</b><div class="mut small">par ${parTotal(c)} · ${hasRating(c) ? 'CR ' + c.cr + ' / slope ' + c.slope : '<span class="flag">rating needed</span>'} · ${totalYds(c)} yd</div></span>›</div>`).join('')}</div>`).join('') : '<div class="card"><p class="mut">No courses yet.</p></div>'}</div>`;
   }
   const parTotal = (c) => c.holes.reduce((t, h) => t + (+h.par || 0), 0);
   function newCourse() {
@@ -326,6 +358,7 @@
     const c = V.args.draft;
     const sis = c.holes.map(h => +h.si); const dup = sis.length !== new Set(sis).size || sis.some(s => s < 1 || s > 18);
     return top(c.name ? esc(c.name) : 'New course', 'courses') + `<div class="wrap">
+      ${c.note ? `<div class="banner">${esc(c.note)}</div>` : ''}
       <div class="card stack"><div class="grid2"><div><label class="f">Course name</label><input type="text" data-bind="course.name" value="${esc(c.name)}"></div>
       <div><label class="f">Tees</label><input type="text" data-bind="course.tee" value="${esc(c.tee)}"></div></div>
       <div class="grid2"><div><label class="f">Course rating (18)</label><input type="number" step="0.1" data-bind="course.cr" value="${c.cr}"></div><div><label class="f">Slope (18)</label><input type="number" data-bind="course.slope" value="${c.slope}"></div></div>
@@ -339,6 +372,7 @@
       <table class="hgrid"><tr><th>Hole</th><th>Par</th><th>SI</th><th>Yards</th></tr>
       ${c.holes.map((h, i) => `<tr><td><b>${h.n}</b></td><td><input type="number" min="3" max="6" data-bind="course.h.${i}.par" value="${h.par}"></td><td><input type="number" min="1" max="18" data-bind="course.h.${i}.si" value="${h.si}"></td><td><input type="number" data-bind="course.h.${i}.yards" value="${h.yards}"></td></tr>`).join('')}</table></div>
       <button class="btn pri block" data-act="savecourse" ${dup || !c.name ? 'disabled' : ''}>Save course</button>
+      ${S.courses[c.id] ? `<button class="btn block" style="margin-top:10px" data-act="addtee" data-id="${c.id}">+ Add another tee for this course</button>` : ''}
       ${S.courses[c.id] ? `<button class="btn danger block" style="margin-top:10px" data-act="delcourse" data-id="${c.id}">Delete course</button>` : ''}
     </div>`;
   }
@@ -353,14 +387,17 @@
   // ---------- START ROUND ----------
   function vStart() {
     const p = S.profile; const a = V.args;
-    const cs = Object.values(S.courses);
-    if (!a.courseId && cs.length) a.courseId = cs[0].id;
+    const names = courseNames();
+    if (!a.courseId || !S.courses[a.courseId]) { const lib = names.find(n => n === 'Sutton Green GC'); const pick = a.courseName || lib || names[0]; const ts = pick ? teesOf(pick) : []; a.courseId = ts.length ? (ts.find(t => /white|yellow/i.test(t.tee)) || ts[0]).id : null; }
     a.date = a.date || today(); a.holesPlayed = a.holesPlayed || '18'; a.format = a.format || 'individual';
     a.allowance = a.allowance ?? p.cfg.allowance; a.preset = a.preset ?? ''; a.entryMode = a.entryMode || p.cfg.entryMode;
     const c = S.courses[a.courseId];
-    const ph = c ? calcPH(c, a) : null;
+    const rated = c && hasRating(c);
+    const ph = rated ? calcPH(c, a) : null;
+    const tees = c ? teesOf(c.name) : [];
     return top('Start round', 'home') + `<div class="wrap"><div class="card stack">
-      ${selF('Course / tees', 'start.courseId', a.courseId, cs.map(x => [x.id, x.name + ' — ' + x.tee]))}
+      ${selF('Course', 'start.courseName', c ? c.name : '', names.map(n => [n, n]))}
+      <div><label class="f">Tees</label><div class="chips">${tees.map(t => `<button class="chip ${t.id === a.courseId ? 'on' : ''}" data-act="picktee" data-id="${t.id}">${esc(t.tee)} <span class="small mut">${totalYds(t)}</span></button>`).join('')}</div></div>
       <div class="grid2"><div><label class="f">Date</label><input type="date" data-bind="start.date" value="${a.date}"></div>
       ${selF('Holes', 'start.holesPlayed', a.holesPlayed, [['18', '18 holes'], ['F9', 'Front 9'], ['B9', 'Back 9']])}</div>
       <div class="grid2">${selF('Format', 'start.format', a.format, FORMATS)}${selF('Allowance', 'start.allowance', a.allowance, [[100, '100%'], [95, '95% (individual stroke play)'], [90, '90%'], [85, '85%'], [75, '75%']])}</div>
@@ -374,9 +411,16 @@
         <div><label class="f">Temperature (°C)</label><input type="number" data-bind="start.temp" value="${a.temp ?? ''}"></div>
         ${selF('Green speed', 'start.greens', a.greens || '', [['', '–'], ['slow', 'Slow'], ['medium', 'Medium'], ['fast', 'Fast']])}</div></details>
       </div>
-      ${c ? `<div class="hdr"><div class="row"><div class="grow"><div class="mut small">Playing handicap</div><div class="big">${ph.ph}</div></div><div class="mut small" style="text-align:right">Course HC ${fmt(ph.ch)}<br>CR ${ph.cr} · slope ${ph.slope} · par ${ph.par}</div></div></div>` : ''}
+      ${c ? teePreview(c, a.holesPlayed) : ''}
+      ${c && !rated ? `<div class="banner" style="background:#FCE8E6;color:var(--bad)">The ${esc(c.tee)} tees have no course rating or slope yet, so the playing handicap can't be worked out. <button class="btn" data-act="nav" data-v="course" data-id="${c.id}">Enter them</button></div>` : ''}
+      ${rated ? `<div class="hdr"><div class="row"><div class="grow"><div class="mut small">Playing handicap</div><div class="big">${ph.ph}</div></div><div class="mut small" style="text-align:right">Course HC ${fmt(ph.ch)}<br>CR ${ph.cr} · slope ${ph.slope} · par ${ph.par}</div></div></div>` : ''}
       ${a.format !== 'individual' ? '<div class="banner">Team and practice rounds are saved but do not feed your personal stats.</div>' : ''}
-      <button class="btn pri block" data-act="createround" ${c ? '' : 'disabled'}>Calculate targets & plan</button></div>`;
+      <button class="btn pri block" data-act="createround" ${rated ? '' : 'disabled'}>Calculate targets & plan</button></div>`;
+  }
+  function teePreview(c, hp) {
+    const hs = hp === 'F9' ? c.holes.slice(0, 9) : hp === 'B9' ? c.holes.slice(9) : c.holes;
+    return `<div class="card" style="padding:8px;overflow-x:auto"><div class="mut small" style="padding:2px 4px 6px"><b>${esc(c.tee)} tees</b> · par ${hs.reduce((t, h) => t + +h.par, 0)} · ${hs.reduce((t, h) => t + (+h.yards || 0), 0)} yd${hasRating(c) ? ' · CR ' + c.cr + ' / slope ' + c.slope : ''}</div>
+      <table class="t"><tr><th>H</th>${hs.map(h => `<th>${h.n}</th>`).join('')}</tr><tr><td class="l">Par</td>${hs.map(h => `<td>${h.par}</td>`).join('')}</tr><tr><td class="l">SI</td>${hs.map(h => `<td>${h.si}</td>`).join('')}</tr><tr><td class="l">Yd</td>${hs.map(h => `<td>${h.yards}</td>`).join('')}</tr></table></div>`;
   }
   function calcPH(c, a) {
     const hi = num(a.hi) ?? S.profile.hi;
@@ -508,8 +552,9 @@
   // ---------- GPS tap-to-mark ----------
   function holeGreen(r, n) {
     const h = r.holes.find(x => x.n == n); if (h && h.green) return h.green;
-    const c = S.courses[r.courseId]; const ch = c && c.holes.find(x => x.n == n);
-    return ch && ch.green ? ch.green : null;
+    const c = S.courses[r.courseId]; const name = c ? c.name : (r.courseName || '').replace(/ \(.*\)$/, '');
+    for (const t of teesOf(name)) { const ch = t.holes.find(x => x.n == n); if (ch && ch.green) return ch.green; }
+    return null;
   }
   function gpsRow(r, n, inp) {
     if (!('geolocation' in navigator)) return '';
@@ -522,7 +567,7 @@
   function getPos() {
     return new Promise((res, rej) => navigator.geolocation.getCurrentPosition(
       p => res({ lat: p.coords.latitude, lon: p.coords.longitude, acc: p.coords.accuracy }),
-      e => rej(e), { enableHighAccuracy: true, timeout: 15000, maximumAge: 3000 }));
+      e => rej(e), { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }));
   }
   function gpsError(e) {
     toast(e && e.code === 1 ? 'Location is blocked. Allow location for this site in your browser settings.' : 'Could not get a GPS fix. Try again in the open.');
@@ -546,8 +591,8 @@
     try {
       const pos = await getPos(); const g = { lat: pos.lat, lon: pos.lon, acc: pos.acc };
       const rh = r.holes.find(x => x.n == n); if (rh) rh.green = g;
-      const c = S.courses[r.courseId]; const ch = c && c.holes.find(x => x.n == n);
-      if (ch) { ch.green = g; save('course', c.id); }
+      const c = S.courses[r.courseId];
+      if (c) teesOf(c.name).forEach(t => { const ch = t.holes.find(x => x.n == n); if (ch) { ch.green = g; save('course', t.id); } });
       save('round', r.id);
       toast(`Green ${n} saved`);
       keepScroll();
@@ -776,9 +821,11 @@
       case 'savepreset': { const nm = ($('#presetName').value || '').trim(); if (!nm) return toast('Name the preset first'); p.presets[nm] = clone(p.cfg); save('profile'); toast('Preset saved'); return render(); }
       case 'loadpreset': p.cfg = Object.assign(TE.defaultConfig(), clone(p.presets[d.n])); save('profile'); toast('Now using ' + d.n); return render();
       case 'delpreset': delete p.presets[d.n]; save('profile'); return render();
-      case 'savecourse': { const c = V.args.draft; c.updatedAt = Date.now(); S.courses[c.id] = clone(c); save('course', c.id); toast('Course saved'); return go(activeRound() ? 'home' : 'start', { courseId: c.id, hi: p.hi }); }
+      case 'addtee': { const src = S.courses[d.id]; const c = Object.assign(clone(src), { id: uid(), tee: '', cr: '', slope: '', cr9f: '', slope9f: '', cr9b: '', slope9b: '', note: 'New tee: par and stroke index are copied from ' + src.tee + '. Enter the yardages and ratings.', createdAt: Date.now() }); delete c.library; delete c.libVersion; delete c.edited; return go('course', { draft: c }); }
+      case 'savecourse': { const c = V.args.draft; c.updatedAt = Date.now(); if (c.library) c.edited = true; S.courses[c.id] = clone(c); save('course', c.id); toast('Course saved'); return go(activeRound() ? 'home' : 'start', { courseId: c.id, hi: p.hi }); }
       case 'delcourse': return confirmBox('Delete this course? Past rounds keep their own copy of the holes.', 'Delete', () => { delete S.courses[d.id]; save('course', d.id); go('courses'); });
       case 'createround': return createRound();
+      case 'pickTee': case 'picktee': V.args.courseId = d.id; return keepScroll();
       case 'resume': { const r = S.rounds[d.id]; return go('hole', { id: r.id, n: firstUnplayed(r, computed(r)) }); }
       case 'planedit': V.args.edit = V.args.edit == d.n ? null : d.n; return keepScroll();
       case 'delround': return confirmBox('Delete this round? This cannot be undone.', 'Delete', () => { delete S.rounds[d.id]; save('round', d.id); go('home'); });
@@ -849,6 +896,7 @@
     const d = lsLoad();
     S.profile = d && d.profile ? migrateProfile(d.profile) : defaultProfile();
     S.courses = (d && d.courses) || {}; S.rounds = (d && d.rounds) || {};
+    seedLibrary();
     render();
     initCloud();
     // Offline support when hosted as a standalone PWA (not inside a claude.ai artifact).
